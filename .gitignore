@@ -3,6 +3,9 @@ data/
 images/
 images_stack/
 images_stack_without_captions/
+*.jpg
+*.jpeg
+*.png
 *.csv
 *.xlsx
 
