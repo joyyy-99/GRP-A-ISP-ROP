@@ -1,46 +1,26 @@
-import argparse, pathlib, pandas as pd
-from tqdm import tqdm
-from src.rop_pipeline.parse_filenames import parse_filename
+import re
 
-def collect_metadata(images_root: pathlib.Path) -> pd.DataFrame:
-    files = list(images_root.glob("*.jpg"))
-    rows = []
-    for p in tqdm(files, desc="Parsing filenames"):
-        try:
-            meta = parse_filename(p.name)
-            meta["filepath"] = str(p.resolve())
-            rows.append(meta)
-        except Exception as e:
-            rows.append({"filepath": str(p.resolve()), "error": str(e)})
-    return pd.DataFrame(rows)
+PATTERN = re.compile(
+    r"(?P<patient_id>\d+)_"
+    r"(?P<sex>[MF])_"
+    r"GA(?P<ga>\d+)_"
+    r"BW(?P<bw>\d+)_"
+    r"PA(?P<pa>\d+)_"
+    r"DG(?P<dg>\d+)_"
+    r"PF(?P<pf>\d+)_"
+    r"(?P<device>[A-Za-z]+)(?P<device_version>\d+)?_"
+    r"S(?P<series>\d+)_"
+    r"(?P<imgnum>\d+)\.jpg$",
+    re.IGNORECASE,
+)
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--images_root", required=True)   # path to images_stack_without_captions
-    ap.add_argument("--patient_info", required=True)  # csv or xlsx
-    ap.add_argument("--out_csv", default="data/metadata/parsed.csv")
-    args = ap.parse_args()
-
-    images_root = pathlib.Path(args.images_root)
-    df_files = collect_metadata(images_root)
-
-    # load patient info
-    if args.patient_info.lower().endswith(".xlsx"):
-        df_info = pd.read_excel(args.patient_info)
-    else:
-        df_info = pd.read_csv(args.patient_info)
-
-    # standardize patient_id in patient info
-    if "patient_id" not in df_info.columns:
-        df_info.rename(columns={df_info.columns[0]: "patient_id"}, inplace=True)
-    df_info["patient_id"] = df_info["patient_id"].astype(str).str.zfill(3)
-
-    df = df_files.merge(df_info, on="patient_id", how="left", suffixes=("", "_pi"))
-    pathlib.Path(args.out_csv).parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(args.out_csv, index=False)
-
-    errs = df["error"].notna().sum() if "error" in df.columns else 0
-    print(f"Saved: {args.out_csv} | images: {len(df)} | filename_parse_errors: {errs}")
-
-if __name__ == "__main__":
-    main()
+def parse_filename(name: str) -> dict:
+    m = PATTERN.search(name)
+    if not m:
+        raise ValueError(f"Filename does not match schema: {name}")
+    d = m.groupdict()
+    for k in ["ga", "bw", "pa", "dg", "pf", "series", "imgnum"]:
+        d[k] = int(d[k])
+    d["patient_id"] = d["patient_id"].zfill(3)
+    d["device"] = d["device"].upper()
+    return d

@@ -16,8 +16,8 @@ def collect_metadata(images_root: pathlib.Path) -> pd.DataFrame:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--images_root", required=True)   # path to images_stack_without_captions
-    ap.add_argument("--patient_info", required=True)  # csv or xlsx
+    ap.add_argument("--images_root", default=r"C:\Users\joyaw\OneDrive\Desktop\archive\images_stack_without_captions")   # path to images_stack_without_captions
+    ap.add_argument("--patient_info", default=r"C:\Users\joyaw\OneDrive\Desktop\archive\infant_retinal_database_info.csv")  # csv or xlsx
     ap.add_argument("--out_csv", default="data/metadata/parsed.csv")
     args = ap.parse_args()
 
