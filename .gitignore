@@ -1,0 +1,10 @@
+# data
+images_stack_without_captions/
+*.jpg
+*.jpeg
+*.png
+
+# env
+.venv/
+__pycache__/
+.ipynb_checkpoints/
