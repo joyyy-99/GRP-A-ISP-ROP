@@ -7,6 +7,7 @@ Implements patient-wise split, class imbalance handling, and progressive unfreez
 import argparse
 import json
 import os
+import platform
 from pathlib import Path
 from typing import Dict, Any
 
@@ -28,11 +29,11 @@ def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Train ROP severity classifier")
     
-    parser.add_argument("--csv", type=str, default="data/metadata/parsed.csv",
+    parser.add_argument("--csv", type=str, default="data/metadata/parsed_severity.csv",
                        help="Path to CSV metadata file")
     parser.add_argument("--split_json", type=str, default="data/splits/split_by_patient.json",
                        help="Path to patient split JSON file")
-    parser.add_argument("--label_col", type=str, default="dg",
+    parser.add_argument("--label_col", type=str, default="severity_bin",
                        help="Label column name")
     parser.add_argument("--batch_size", type=int, default=32,
                        help="Batch size for training")
@@ -40,10 +41,13 @@ def parse_args():
                        help="Number of training epochs")
     parser.add_argument("--lr", type=float, default=3e-4,
                        help="Learning rate")
-    parser.add_argument("--freeze_warmup", type=int, default=2,
+    parser.add_argument("--freeze_warmup", type=int, default=4,
                        help="Number of epochs to freeze backbone")
     parser.add_argument("--outdir", type=str, default="experiments/runs/baseline",
                        help="Output directory for checkpoints and logs")
+    parser.add_argument("--images_root", type=str, 
+                       default=r"C:\Users\joyaw\OneDrive\Desktop\archive\images_stack_without_captions\images_stack_without_captions",
+                       help="Path to images directory")
     
     return parser.parse_args()
 
@@ -127,9 +131,7 @@ def train_epoch(model: nn.Module, train_loader: DataLoader, optimizer: optim.Opt
     for batch_idx, (images, labels, _) in enumerate(train_loader):
         images, labels = images.to(device), labels.to(device)
         
-        # Optional eye-gating (lightweight)
-        if batch_idx == 0:  # Only check first batch of each epoch
-            eye_gate_batch(images, device)
+        # Eye-gating disabled during training (kept for inference only)
         
         optimizer.zero_grad()
         outputs = model(images)
@@ -165,31 +167,49 @@ def main():
     split = load_patient_split(args.split_json)
     train_df, val_df, test_df = split_dataframe_by_patients(df, split)
     
+    # Start-of-run summary
+    print("\n" + "="*60)
+    print("TRAINING SETUP SUMMARY")
+    print("="*60)
     print(f"Train patients: {len(split['train'])}, samples: {len(train_df)}")
     print(f"Val patients: {len(split['val'])}, samples: {len(val_df)}")
     print(f"Test patients: {len(split['test'])}, samples: {len(test_df)}")
+    print(f"Total patients: {len(split['train']) + len(split['val']) + len(split['test'])}")
+    print(f"Total samples: {len(train_df) + len(val_df) + len(test_df)}")
+    
+    # Log class distribution
+    print("\nClass distribution:")
+    train_class_counts = train_df[args.label_col].value_counts().sort_index()
+    val_class_counts = val_df[args.label_col].value_counts().sort_index()
+    print("Train classes:", train_class_counts.to_dict())
+    print("Val classes:", val_class_counts.to_dict())
+    print("="*60)
     
     # Create datasets
-    train_dataset = ROPDataset(args.csv, train=True, label_col=args.label_col, patient_ids=split['train'])
-    val_dataset = ROPDataset(args.csv, train=False, label_col=args.label_col, patient_ids=split['val'])
+    train_dataset = ROPDataset(args.csv, train=True, label_col=args.label_col, patient_ids=split['train'], images_root=args.images_root)
+    val_dataset = ROPDataset(args.csv, train=False, label_col=args.label_col, patient_ids=split['val'], images_root=args.images_root)
     
     # Create weighted sampler for training
     train_sampler = create_weighted_sampler(train_df, args.label_col)
     
     # Create data loaders
+    # Use num_workers=0 on Windows for safety, otherwise use 4
+    num_workers = 0 if platform.system() == "Windows" else 4
+    pin_memory = (device.type == "cuda")
+    
     train_loader = DataLoader(
         train_dataset, 
         batch_size=args.batch_size, 
         sampler=train_sampler,
-        num_workers=4,
-        pin_memory=True
+        num_workers=num_workers,
+        pin_memory=pin_memory
     )
     val_loader = DataLoader(
         val_dataset, 
         batch_size=args.batch_size, 
         shuffle=False,
-        num_workers=4,
-        pin_memory=True
+        num_workers=num_workers,
+        pin_memory=pin_memory
     )
     
     # Create model
@@ -197,15 +217,29 @@ def main():
     model = EffNetClassifier(num_classes=num_classes).to(device)
     
     # Setup training components
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.AdamW(model.parameters(), lr=args.lr)
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
+    
+    # Create separate param groups for head and backbone
+    head_params = list(model.head.parameters())
+    backbone_params = list(model.backbone.parameters())
+    
+    optimizer = optim.AdamW([
+        {'params': head_params, 'lr': args.lr},
+        {'params': backbone_params, 'lr': 1e-5}
+    ], weight_decay=1e-4)
+    
+    # Scheduler (applied after unfreezing)
+    scheduler = None
     
     # Training loop
     best_val_f1 = 0.0
     metrics_history = []
+    early_stop_patience = 6
+    epochs_without_improvement = 0
     
     print(f"Starting training for {args.epochs} epochs...")
     print(f"Freeze warmup: {args.freeze_warmup} epochs")
+    print(f"Early stopping patience: {early_stop_patience} epochs")
     print(f"Model classes: {num_classes}")
     
     for epoch in range(args.epochs):
@@ -217,6 +251,20 @@ def main():
             freeze_backbone(model, freeze=False)
             if epoch == args.freeze_warmup:
                 print(f"Epoch {epoch+1}: Backbone unfrozen")
+                # Rebuild optimizer with both param groups active
+                head_params = list(model.head.parameters())
+                backbone_params = list(model.backbone.parameters())
+                optimizer = optim.AdamW([
+                    {'params': head_params, 'lr': args.lr},
+                    {'params': backbone_params, 'lr': 1e-5}
+                ], weight_decay=1e-4)
+                
+                # Initialize scheduler after unfreezing
+                scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                    optimizer, T_max=args.epochs - args.freeze_warmup
+                )
+                print(f"  -> Optimizer rebuilt with head LR={args.lr}, backbone LR=1e-5")
+                print(f"  -> CosineAnnealingLR scheduler initialized (T_max={args.epochs - args.freeze_warmup})")
         
         # Train
         train_loss = train_epoch(model, train_loader, optimizer, criterion, device, epoch)
@@ -233,17 +281,36 @@ def main():
         }
         metrics_history.append(epoch_metrics)
         
-        # Print progress
-        print(f"Epoch {epoch+1:2d}/{args.epochs}: "
-              f"train_loss={train_loss:.4f}, "
-              f"val_loss={val_metrics['val_loss']:.4f}, "
-              f"val_f1_macro={val_metrics['val_f1_macro']:.4f}")
+        # Step scheduler if active
+        if scheduler is not None:
+            scheduler.step()
+            current_lrs = [group['lr'] for group in optimizer.param_groups]
+            print(f"Epoch {epoch+1:2d}/{args.epochs}: "
+                  f"train_loss={train_loss:.4f}, "
+                  f"val_loss={val_metrics['val_loss']:.4f}, "
+                  f"val_f1_macro={val_metrics['val_f1_macro']:.4f}, "
+                  f"LRs={[f'{lr:.2e}' for lr in current_lrs]}")
+        else:
+            print(f"Epoch {epoch+1:2d}/{args.epochs}: "
+                  f"train_loss={train_loss:.4f}, "
+                  f"val_loss={val_metrics['val_loss']:.4f}, "
+                  f"val_f1_macro={val_metrics['val_f1_macro']:.4f}")
         
-        # Save best model
+        # Save best model and check early stopping
         if val_metrics['val_f1_macro'] > best_val_f1:
             best_val_f1 = val_metrics['val_f1_macro']
+            epochs_without_improvement = 0
             torch.save(model.state_dict(), outdir / "best.pt")
             print(f"  -> New best model saved (F1: {best_val_f1:.4f})")
+        else:
+            epochs_without_improvement += 1
+            print(f"  -> No improvement for {epochs_without_improvement} epochs")
+            
+        # Early stopping check
+        if epochs_without_improvement >= early_stop_patience:
+            print(f"\nEarly stopping triggered! No improvement for {early_stop_patience} epochs.")
+            print(f"Best validation F1 macro: {best_val_f1:.4f}")
+            break
     
     # Save final metrics
     final_metrics = {

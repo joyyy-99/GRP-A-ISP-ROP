@@ -9,10 +9,10 @@ class EffNetClassifier(nn.Module):
     
     Args:
         num_classes (int): Number of output classes
-        dropout_rate (float): Dropout rate for the head. Default: 0.2
+        dropout_rate (float): Dropout rate for the head. Default: 0.3
     """
     
-    def __init__(self, num_classes: int, dropout_rate: float = 0.2):
+    def __init__(self, num_classes: int, dropout_rate: float = 0.3):
         super().__init__()
         
         # Create pretrained EfficientNet-B0 backbone

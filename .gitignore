@@ -8,3 +8,8 @@ images_stack_without_captions/
 .venv/
 __pycache__/
 .ipynb_checkpoints/
+
+# experiments and model artifacts
+experiments/
+*.pt
+artifacts/

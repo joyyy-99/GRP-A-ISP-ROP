@@ -8,10 +8,10 @@ def collect_metadata(images_root: pathlib.Path) -> pd.DataFrame:
     for p in tqdm(files, desc="Parsing filenames"):
         try:
             meta = parse_filename(p.name)
-            meta["filepath"] = str(p.resolve())
+            meta["filepath"] = p.name
             rows.append(meta)
         except Exception as e:
-            rows.append({"filepath": str(p.resolve()), "error": str(e)})
+            rows.append({"filepath": p.name, "error": str(e)})
     return pd.DataFrame(rows)
 
 def main():
