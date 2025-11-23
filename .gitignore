@@ -1,10 +1,104 @@
-# data
+# ===================
+# Data & Images
+# ===================
 images_stack_without_captions/
 *.jpg
 *.jpeg
 *.png
+*.gif
+*.bmp
+*.tiff
 
-# env
+# ===================
+# Python Environment
+# ===================
 .venv/
+venv/
+env/
+.env
+*.pyc
 __pycache__/
 .ipynb_checkpoints/
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ===================
+# Model Artifacts & Checkpoints
+# ===================
+experiments/
+*.pt
+*.pth
+*.ckpt
+artifacts/
+checkpoints/
+checkpoints_local
+*.h5
+*.hdf5
+*.onnx
+
+# ===================
+# IDE & Editor
+# ===================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ===================
+# Temporary Files
+# ===================
+*.temp
+*.tmp
+_temp_patch.diff
+function.temp
+README_update.txt
+
+# ===================
+# Logs
+# ===================
+*.log
+logs/
+
+# ===================
+# Build & Distribution
+# ===================
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ===================
+# Secrets & Credentials
+# ===================
+.env
+.env.local
+*.key
+*.pem
+credentials.json
+secrets.json
+
+# ===================
+# OS Files
+# ===================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===================
+# Jupyter
+# ===================
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ===================
+# Coverage & Testing
+# ===================
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
